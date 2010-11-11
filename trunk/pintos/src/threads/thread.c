@@ -23,7 +23,8 @@
 /* List of processes in THREAD_READY state, that is, processes
    that are ready to run but not actually running. */
 static struct list ready_list;
-
+/* By W:list of thread in THREAD_READY state*/
+static struct list block_list;
 /* List of all processes.  Processes are added to this list
    when they are first scheduled and removed when they exit. */
 static struct list all_list;
@@ -91,6 +92,8 @@ thread_init (void)
 
   lock_init (&tid_lock);
   list_init (&ready_list);
+  /*By W*/
+  list_init (&block_list);
   list_init (&all_list);
 
   /* Set up a thread structure for the running thread. */
@@ -224,7 +227,10 @@ thread_block (void)
   ASSERT (!intr_context ());
   ASSERT (intr_get_level () == INTR_OFF);
 
+  /*By W*/
+ 
   thread_current ()->status = THREAD_BLOCKED;
+  thread_wakeup();
   schedule ();
 }
 
@@ -271,7 +277,7 @@ thread_current (void)
      of stack, so a few big automatic arrays or moderate
      recursion can cause stack overflow. */
   ASSERT (is_thread (t));
-  ASSERT (t->status == THREAD_RUNNING);
+  //ASSERT (t->status == THREAD_RUNNING);
 
   return t;
 }
@@ -315,6 +321,8 @@ thread_yield (void)
   ASSERT (!intr_context ());
 
   old_level = intr_disable ();
+  /*By W:call wakeup()*/
+  thread_wakeup();
   if (cur != idle_thread) 
     list_push_back (&ready_list, &cur->elem);
   cur->status = THREAD_READY;
@@ -585,3 +593,54 @@ allocate_tid (void)
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);
+
+/*By W:Sleep the thread,called by timer_sleep()*/
+void
+thread_sleep(int64_t s_ticks) 
+{
+  struct thread *cur = thread_current ();
+  enum intr_level old_level;
+  
+  ASSERT (!intr_context ());
+  old_level = intr_disable ();  
+  
+  thread_wakeup();
+	if (cur != idle_thread) 
+	{ 
+			list_push_back (&block_list, &cur->elem);
+			cur->block_start_ticks=timer_ticks();
+			cur->block_ticks=s_ticks;
+			cur->status = THREAD_BLOCKED;
+	}
+	
+	schedule();
+  intr_set_level (old_level);
+}
+
+/* By W:Wakeup the block thread*/
+void 
+thread_wakeup()
+{
+	struct list_elem *temp,*mid;
+  struct thread *st;
+
+	for (temp= list_begin (&block_list); temp != list_end (&block_list);
+       )
+		{  
+			st = list_entry (temp, struct thread, elem);
+			  
+			if((timer_ticks()-st->block_start_ticks)>= st->block_ticks)
+				{
+					mid=list_remove(temp);
+					st = list_entry (temp, struct thread, elem);
+					st->status = THREAD_READY;
+					st->block_ticks=0;
+					list_push_back (&ready_list, &st->elem);
+					temp=mid;
+				}
+				else
+				{
+					temp=list_next(temp);
+				}
+		}	
+}
