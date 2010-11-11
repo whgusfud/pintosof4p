@@ -90,9 +90,8 @@ struct thread
     int priority;                       /* Priority. */
     struct list_elem allelem;           /* List element for all threads list. */
     
-    /*By W:record the block_ticks and the block_start_time of a block thread */
-    int64_t block_ticks; 
-		int64_t block_start_ticks;
+    /*By W:record the wakeup_tick */
+    int64_t wakeup_tick;
 
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
@@ -144,4 +143,7 @@ int thread_get_load_avg (void);
 
 void thread_wakeup();
 void thread_sleep(int64_t);
+bool sleep_less (const struct list_elem *,const struct list_elem *,
+                 void *);
+
 #endif /* threads/thread.h */

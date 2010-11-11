@@ -248,7 +248,7 @@ thread_unblock (struct thread *t)
   enum intr_level old_level;
 
   ASSERT (is_thread (t));
-
+  
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
   list_push_back (&ready_list, &t->elem);
@@ -605,15 +605,14 @@ thread_sleep(int64_t s_ticks)
   old_level = intr_disable ();  
   
   thread_wakeup();
-	if (cur != idle_thread) 
-	{ 
-			list_push_back (&block_list, &cur->elem);
-			cur->block_start_ticks=timer_ticks();
-			cur->block_ticks=s_ticks;
-			cur->status = THREAD_BLOCKED;
-	}
-	
-	schedule();
+  if (cur != idle_thread) 
+  { 
+      cur->wakeup_tick=timer_ticks()+s_ticks;
+      cur->status = THREAD_BLOCKED;
+      list_insert_ordered(&block_list,&cur->elem,sleep_less,NULL);
+  }
+  
+  schedule();
   intr_set_level (old_level);
 }
 
@@ -621,26 +620,38 @@ thread_sleep(int64_t s_ticks)
 void 
 thread_wakeup()
 {
-	struct list_elem *temp,*mid;
+  struct list_elem *temp,*mid;
   struct thread *st;
 
-	for (temp= list_begin (&block_list); temp != list_end (&block_list);
+  for (temp= list_begin (&block_list); temp != list_end (&block_list);
        )
-		{  
-			st = list_entry (temp, struct thread, elem);
-			  
-			if((timer_ticks()-st->block_start_ticks)>= st->block_ticks)
-				{
-					mid=list_remove(temp);
-					st = list_entry (temp, struct thread, elem);
-					st->status = THREAD_READY;
-					st->block_ticks=0;
-					list_push_back (&ready_list, &st->elem);
-					temp=mid;
-				}
-				else
-				{
-					temp=list_next(temp);
-				}
-		}	
+    {  
+      st = list_entry (temp, struct thread, elem);
+        
+      if(timer_ticks()>=st->wakeup_tick)
+        {
+          mid=list_remove(temp);
+          st = list_entry (temp, struct thread, elem);
+          thread_unblock(st);
+          temp=mid;
+        }
+        else 
+        {
+          break;
+        }
+    } 
 }
+
+/*By W:Compares the value of two thread's wakeup_tick A and B,*/
+ bool sleep_less (const struct list_elem *a,
+                  const struct list_elem *b,void *aux)
+                     {
+                       struct thread *a_thread,*b_thread;
+                       a_thread=list_entry (a, struct thread, elem);
+                       b_thread=list_entry (b, struct thread,elem);
+                       
+                       if(a_thread->wakeup_tick<b_thread->wakeup_tick)
+                        return true;
+                       else 
+                        return false;
+                     }
