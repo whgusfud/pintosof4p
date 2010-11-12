@@ -141,9 +141,12 @@ void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 
-void thread_wakeup();
+void thread_wakeup(void);
 void thread_sleep(int64_t);
 bool sleep_less (const struct list_elem *,const struct list_elem *,
                  void *);
+/* L: the priority_higher func */
+bool priority_higher (const struct list_elem *,
+                  const struct list_elem *,void *);
 
 #endif /* threads/thread.h */

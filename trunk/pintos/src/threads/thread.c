@@ -246,13 +246,15 @@ void
 thread_unblock (struct thread *t) 
 {
   enum intr_level old_level;
-
+  
   ASSERT (is_thread (t));
   
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
-  list_push_back (&ready_list, &t->elem);
+  /* L: put it to the ready_list order by priority */
+  list_insert_ordered(&ready_list,&t->elem,priority_higher,NULL);
   t->status = THREAD_READY;
+  
   intr_set_level (old_level);
 }
 
@@ -324,7 +326,9 @@ thread_yield (void)
   /*By W:call wakeup()*/
   thread_wakeup();
   if (cur != idle_thread) 
-    list_push_back (&ready_list, &cur->elem);
+    /* L:put it to the ready_list with priority */
+    list_insert_ordered(&ready_list,&cur->elem,priority_higher,NULL);
+    
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);
@@ -643,7 +647,7 @@ thread_wakeup()
 }
 
 /*By W:Compares the value of two thread's wakeup_tick A and B,*/
- bool sleep_less (const struct list_elem *a,
+bool sleep_less (const struct list_elem *a,
                   const struct list_elem *b,void *aux)
                      {
                        struct thread *a_thread,*b_thread;
@@ -651,6 +655,21 @@ thread_wakeup()
                        b_thread=list_entry (b, struct thread,elem);
                        
                        if(a_thread->wakeup_tick<b_thread->wakeup_tick)
+                        return true;
+                       else 
+                        return false;
+                     }
+
+/* L: Used in the unblock to insert thread to ready_list ordered by
+ * thread's priority. When schedule, we just take the top one out. */
+bool priority_higher (const struct list_elem *a,
+                  const struct list_elem *b,void *aux)
+                     {
+                       struct thread *a_thread,*b_thread;
+                       a_thread=list_entry (a, struct thread, elem);
+                       b_thread=list_entry (b, struct thread,elem);
+                       
+                       if(a_thread->priority > b_thread->priority)
                         return true;
                        else 
                         return false;
