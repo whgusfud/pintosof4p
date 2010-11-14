@@ -168,6 +168,11 @@ static void
 timer_interrupt (struct intr_frame *args UNUSED)
 {
   ticks++;
+  /* L: To wakeup blocked(sleeping) threads, check &wakeup 
+   * Used to be called in thread_***() funcs, I move it here to make
+   * sure a thread is moved into ready_list EXACTLY it's wakeup tick
+   * comes. */
+  thread_wakeup();
   thread_tick ();
 }
 
