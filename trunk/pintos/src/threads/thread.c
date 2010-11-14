@@ -226,11 +226,8 @@ thread_block (void)
 {
   ASSERT (!intr_context ());
   ASSERT (intr_get_level () == INTR_OFF);
-
-  /*By W*/
  
   thread_current ()->status = THREAD_BLOCKED;
-  thread_wakeup();
   schedule ();
 }
 
@@ -255,6 +252,25 @@ thread_unblock (struct thread *t)
   list_insert_ordered(&ready_list,&t->elem,priority_higher,NULL);
   t->status = THREAD_READY;
   
+  /* L: Some thread t_low may unblock a higher priority thread t_high,
+   * in such case t_low must yield cpu to t_high immediately */
+  if(!list_empty(&ready_list))
+  {
+    struct list_elem *ready_e = list_max (&ready_list, priority_higher, NULL);
+    int max_priority = list_entry(ready_e,struct thread, elem)->priority;
+    
+    /* L: We just handle normal thread priority change, idle is not
+     * one of them. We do not handle it here, just let it pass. */
+    if((thread_current ()->priority < max_priority) &&(thread_current() != idle_thread))
+    {
+      /* L: unblock maybe called in intr-context or non-intr-context,
+       * they are different in handling. */
+      if (intr_context ())
+        intr_yield_on_return ();
+      else
+        thread_yield ();
+    }
+  }
   intr_set_level (old_level);
 }
 
@@ -323,13 +339,12 @@ thread_yield (void)
   ASSERT (!intr_context ());
 
   old_level = intr_disable ();
-  /*By W:call wakeup()*/
-  thread_wakeup();
+  
   if (cur != idle_thread) 
     /* L:put it to the ready_list with priority */
     list_insert_ordered(&ready_list,&cur->elem,priority_higher,NULL);
-    
   cur->status = THREAD_READY;
+  
   schedule ();
   intr_set_level (old_level);
 }
@@ -356,6 +371,18 @@ void
 thread_set_priority (int new_priority) 
 {
   thread_current ()->priority = new_priority;
+  
+  /* L: priority-change test requires an immediately yield when
+   * cur->priority < max_priority(ready_list).
+   * A check is needed here. */
+  if(!list_empty(&ready_list))
+  {
+    struct list_elem *ready_e = list_max (&ready_list, priority_higher, NULL);
+    int max_priority = list_entry(ready_e,struct thread, elem)->priority;
+    
+    if(thread_current ()->priority < max_priority)
+      thread_yield();
+  }
 }
 
 /* Returns the current thread's priority. */
@@ -608,7 +635,6 @@ thread_sleep(int64_t s_ticks)
   ASSERT (!intr_context ());
   old_level = intr_disable ();  
   
-  thread_wakeup();
   if (cur != idle_thread) 
   { 
       cur->wakeup_tick=timer_ticks()+s_ticks;
@@ -674,3 +700,19 @@ bool priority_higher (const struct list_elem *a,
                        else 
                         return false;
                      }
+/* L:Debug func dump the ready_list */
+/* Debug:dump the ready list */
+void ready_list_dump(void)
+{
+  struct list_elem *e;
+  struct thread *f;
+  if(list_size(&ready_list)!=0){
+  printf("[%lld,dump ready list]\n",(uint64_t)timer_ticks());
+  for (e = list_begin (&ready_list); e != list_end (&ready_list);
+           e = list_next (e))
+        {
+          f = list_entry (e, struct thread, elem);
+          printf("[* %s is ready,pri:%d]\n",f->name,f->priority);
+        }
+      }
+}
