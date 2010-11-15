@@ -95,6 +95,8 @@ thread_init (void)
   /*By W*/
   list_init (&block_list);
   list_init (&all_list);
+  /* L: init lock list */
+  list_init (&lock_list);
 
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
@@ -226,7 +228,7 @@ thread_block (void)
 {
   ASSERT (!intr_context ());
   ASSERT (intr_get_level () == INTR_OFF);
- 
+
   thread_current ()->status = THREAD_BLOCKED;
   schedule ();
 }
@@ -251,7 +253,7 @@ thread_unblock (struct thread *t)
   /* L: put it to the ready_list order by priority */
   list_insert_ordered(&ready_list,&t->elem,priority_higher,NULL);
   t->status = THREAD_READY;
-  
+  //printf("[%s Unblocked]\n",t->name);
   /* L: Some thread t_low may unblock a higher priority thread t_high,
    * in such case t_low must yield cpu to t_high immediately */
   if(!list_empty(&ready_list))
@@ -370,7 +372,16 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
-  thread_current ()->priority = new_priority;
+  struct thread *cur = thread_current();
+  if(cur->priority == cur->priority_old)
+  {
+    cur->priority = new_priority;
+    cur->priority_old = new_priority;
+  }
+  else
+  {
+    cur->priority_old = new_priority;
+  }
   
   /* L: priority-change test requires an immediately yield when
    * cur->priority < max_priority(ready_list).
@@ -507,6 +518,8 @@ init_thread (struct thread *t, const char *name, int priority)
   strlcpy (t->name, name, sizeof t->name);
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
+  /* Initialize old_priority */
+  t->priority_old=t->priority;
   t->magic = THREAD_MAGIC;
   list_push_back (&all_list, &t->allelem);
 }
@@ -603,7 +616,10 @@ schedule (void)
   ASSERT (is_thread (next));
 
   if (cur != next)
+  {
+    //printf("[%s to %s]\n",cur->name,next->name);
     prev = switch_threads (cur, next);
+  }
   thread_schedule_tail (prev);
 }
 
