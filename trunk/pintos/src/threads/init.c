@@ -129,6 +129,8 @@ main (void)
 
   printf ("Boot complete.\n");
   
+  /* L: We cannot use alloc before here -_- */
+  alloc_ready = true;
   /* Run actions specified on kernel command line. */
   run_actions (argv);
 
@@ -284,11 +286,13 @@ run_task (char **argv)
   const char *task = argv[1];
   
   printf ("Executing '%s':\n", task);
+  alloc_ready = true;
 #ifdef USERPROG
   process_wait (process_execute (task));
 #else
   run_test (task);
 #endif
+  alloc_ready = false;
   printf ("Execution of '%s' complete.\n", task);
 }
 
