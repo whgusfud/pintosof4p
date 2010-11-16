@@ -105,6 +105,10 @@ struct thread
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
   };
+/* L: If alloc mem before memory is ready, system will halt -_-
+ * it will be ready when main() change it.
+ * */
+bool alloc_ready;
 
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
@@ -147,7 +151,10 @@ void thread_sleep(int64_t);
 bool sleep_less (const struct list_elem *,const struct list_elem *,
                  void *);
 /* L: the priority_higher func */
-bool priority_higher (const struct list_elem *,
-                  const struct list_elem *,void *);
+list_less_func priority_higher;
+list_less_func priority_lower;
+/* L: this will use in synch.c making the waiters in order */
+list_less_func lock_lower;
+list_less_func cond_lower;
 
 #endif /* threads/thread.h */
