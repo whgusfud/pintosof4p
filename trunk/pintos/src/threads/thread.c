@@ -4,6 +4,7 @@
 #include <random.h>
 #include <stdio.h>
 #include <string.h>
+#include "fixed-point.h"
 #include "threads/flags.h"
 #include "threads/interrupt.h"
 #include "threads/intr-stubs.h"
@@ -28,6 +29,9 @@ static struct list block_list;
 /* List of all processes.  Processes are added to this list
    when they are first scheduled and removed when they exit. */
 static struct list all_list;
+
+/*[X]System load average*/
+int64_t load_avg;
 
 /* Idle thread. */
 static struct thread *idle_thread;
@@ -100,6 +104,8 @@ thread_init (void)
   list_init (&all_list);
   /* L: init lock list */
   list_init (&lock_list);
+  /*[X] init load_avg*/
+  load_avg=0;
 
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
@@ -125,14 +131,78 @@ thread_start (void)
   sema_down (&idle_started);
 }
 
+/*[X] calculate the recent_cpu of every thread*/
+void renew_recent_cpu(struct thread* t)
+{
+	/*乘法与加法顺序*/
+	t->recent_cpu=FMUL(FDIV(FMULI(load_avg,2),FADDI(FMULI(load_avg,2),1)),t->recent_cpu);
+	t->recent_cpu=FADDI(t->recent_cpu,t->nice);
+}
+
+/*[X] calculate the ready_threads*/
+int64_t get_ready_threads(){
+	int64_t rt=0;
+	rt=rt+list_size(&ready_list);
+	//printf("[X]1ready threads %d\n",rt);
+	if(thread_current()!=idle_thread)
+		rt++;
+	//printf("[X]ready threads %d\n",rt);
+	return rt;
+}
+
+/*[X] renew priority*/
+void renew_priority(struct thread* t)
+{
+	t->priority=PRI_MAX-F2ITNEAR(FDIVI(t->recent_cpu,4))-(t->nice*2);
+	if(t->priority>PRI_MAX)
+		t->priority=PRI_MAX;
+	if(t->priority<PRI_MIN)
+		t->priority=PRI_MIN;
+		
+}
+
+void renew_all_priority()
+{
+	struct list_elem *e;
+	//printf("list size:%d\n",list_size(&all_list));
+	for (e = list_begin (&all_list); e != list_end (&all_list); e = list_next (e))
+	{
+		if(list_entry(e,struct thread,allelem)==idle_thread)
+			continue;
+		renew_priority(list_entry(e,struct thread,allelem));
+		//printf("[X]renew %s %d\n",list_entry(e,struct thread,allelem)->name,list_entry(e,struct thread,allelem)->priority);
+	}
+	list_sort(&ready_list,priority_higher,NULL);
+	list_sort(&block_list,sleep_less,NULL);
+	intr_yield_on_return ();	
+}
+/* [X] renew all the threads */
+void thread_all_renew(void)
+{
+	ASSERT (intr_get_level () == INTR_OFF);
+	struct list_elem *e;
+	for (e = list_begin (&all_list); e != list_end (&all_list); e = list_next (e))
+	{
+		renew_recent_cpu(list_entry(e,struct thread,allelem));
+	}
+}
+
+/*[X] renew load_avg*/
+void renew_load_avg(void)
+{
+	
+	load_avg=FMUL(load_avg,FDIVI(INT2FLO(59),60))+FMULI(get_ready_threads(),FDIVI(INT2FLO(1),60));
+}
+
+
 /* Called by the timer interrupt handler at each timer tick.
    Thus, this function runs in an external interrupt context. */
-void
+/*void
 thread_tick (void) 
 {
   struct thread *t = thread_current ();
 
-  /* Update statistics. */
+  /* Update statistics. 
   if (t == idle_thread)
     idle_ticks++;
 #ifdef USERPROG
@@ -142,10 +212,69 @@ thread_tick (void)
   else
     kernel_ticks++;
 
-  /* Enforce preemption. */
+  /* Enforce preemption. 
   if (++thread_ticks >= TIME_SLICE)
     intr_yield_on_return ();
 }
+
+*/
+
+/* Called by the timer interrupt handler at each timer tick.
+   Thus, this function runs in an external interrupt context. */
+void
+thread_tick (void) 
+{	
+  struct thread *t = thread_current ();
+
+  /* Update statistics. */
+  if (t == idle_thread)
+    idle_ticks++;
+#ifdef USERPROG
+  else if (t->pagedir != NULL)
+  {
+    user_ticks++;
+    /*[X]renew recent_cpu*/
+	if(thread_mlfqs)
+	{
+		t->recent_cpu=FADDI(t->recent_cpu,1);
+		//printf("[X]fuck %d\n",t->recent_cpu);
+	}
+  }
+#endif
+  else
+  {
+    kernel_ticks++;
+    /*[X]renew recent_cpu*/
+	if(thread_mlfqs)
+	{
+		t->recent_cpu=FADDI(t->recent_cpu,1);
+		//printf("[X]fuck %d\n",t->recent_cpu);
+	}
+}
+  /*[X]summerize recent_cpu*/
+  if(thread_mlfqs)
+  {
+	if(timer_ticks()%100==0)
+	{
+	   	/*更新recent_cpu,load_avg*/
+	   	renew_load_avg();
+	   //	printf("[X] load_avg:%d\n",load_avg);
+	   	thread_all_renew();
+     }
+  }
+
+ if(thread_mlfqs&&timer_ticks()%4==0)
+		renew_all_priority();
+  /* Enforce preemption. */
+  if (++thread_ticks >= TIME_SLICE)
+  {
+	  //printf("[X]we need next\n");
+    intr_yield_on_return ();
+  }
+}
+
+
+
 
 /* Prints thread statistics. */
 void
@@ -373,6 +502,9 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
+  /*[X] if we use advanced scheculer, we can't set priority by ourselves*/
+  if(thread_mlfqs)
+	return;
   struct thread *cur = thread_current();
   if(cur->priority == cur->priority_old)
   {
@@ -406,33 +538,35 @@ thread_get_priority (void)
 
 /* Sets the current thread's nice value to NICE. */
 void
-thread_set_nice (int nice UNUSED) 
+thread_set_nice (int nice) 
 {
-  /* Not yet implemented. */
+  /* [X]set nice value */
+  //printf("[X]%s setnice:%d\n",thread_current()->name,nice);
+  thread_current()->nice=nice;
 }
 
 /* Returns the current thread's nice value. */
 int
-thread_get_nice (void) 
+thread_get_nice () 
 {
-  /* Not yet implemented. */
-  return 0;
+  /*[X] return the nice value of the thread */
+  return thread_current()->nice;
 }
 
 /* Returns 100 times the system load average. */
 int
 thread_get_load_avg (void) 
 {
-  /* Not yet implemented. */
-  return 0;
+  /* [X] the int64 problem */
+  return F2ITNEAR(FMULI(load_avg,100));
 }
 
 /* Returns 100 times the current thread's recent_cpu value. */
 int
 thread_get_recent_cpu (void) 
 {
-  /* Not yet implemented. */
-  return 0;
+  /* [X] */
+  return F2ITNEAR(FMULI(thread_current()->recent_cpu,100));
 }
 
 /* Idle thread.  Executes when no other thread is ready to run.
@@ -518,9 +652,20 @@ init_thread (struct thread *t, const char *name, int priority)
   t->status = THREAD_BLOCKED;
   strlcpy (t->name, name, sizeof t->name);
   t->stack = (uint8_t *) t + PGSIZE;
+  
+  if(thread_mlfqs)
+  {
+	t->recent_cpu=0;
+	t->nice=0;
+	renew_priority(t);
+	//printf("[X]%d\n",t->priority);
+  }
+  else
+  {
   t->priority = priority;
   /* Initialize old_priority */
   t->priority_old=t->priority;
+}
   t->magic = THREAD_MAGIC;
   list_push_back (&all_list, &t->allelem);
 }

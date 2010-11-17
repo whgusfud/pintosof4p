@@ -241,7 +241,7 @@ lock_acquire (struct lock *lock)
    }
   /* L: If this lock is not in lock_list, that is NEVER BEEN acquired.
    * We alloc mem for an elem and put it into lock_list. */
-  if (e == list_end (&lock_list) && lock->lid >= 0 )
+  /*if (e == list_end (&lock_list) && lock->lid >= 0 )
    { 
      struct lock_elem *newelem = (struct lock_elem *)
                                malloc (sizeof (struct lock_elem));
@@ -254,8 +254,8 @@ lock_acquire (struct lock *lock)
         this->lock->priority = cur->priority;
       }
       */
-     list_push_back (&lock_list, &newelem->elem);
-   }
+    // list_push_back (&lock_list, &newelem->elem);
+   //}
   if(lock->holder!=NULL && lock->holder->priority < cur->priority)
   {
     lock->holder->priority = cur->priority;
@@ -348,7 +348,6 @@ lock_release (struct lock *lock)
 
   if (yield)
     thread_yield ();
-  
   intr_set_level (old_level);
 }
 
