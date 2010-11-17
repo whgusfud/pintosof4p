@@ -111,7 +111,7 @@ sema_try_down (struct semaphore *sema)
 
    This function may be called from an interrupt handler. */
 void
-sema_up (struct semaphore *sema) 
+sema_up (struct semaphore *sema)
 {
   enum intr_level old_level;
   ASSERT (sema != NULL);
@@ -259,7 +259,9 @@ lock_acquire (struct lock *lock)
   if(lock->holder!=NULL && lock->holder->priority < cur->priority)
   {
     lock->holder->priority = cur->priority;
+    //printf("[%s(%d) to %so(%d)]",cur->name,cur->priority,lock->holder->name,lock->holder->priority_old);
   }
+  
 
   intr_set_level (old_level);
 
@@ -305,12 +307,15 @@ lock_release (struct lock *lock)
   
   lock->holder = NULL;
 
+  /* L: We don't handle 'system' locks here (lid = -1) */
+  if(lock->lid != -1)
+  {
   struct thread *cur = thread_current ();
+  
   /* L: Check if still donating */
   if (cur->priority > cur->priority_old)
         {
           yield = true;
-          //if(cur->priority == lock->priority)
           cur->priority = cur->priority_old;
         }
   
@@ -337,6 +342,7 @@ lock_release (struct lock *lock)
          }
       }
    }
+  }
 
   sema_up (&lock->semaphore);
 

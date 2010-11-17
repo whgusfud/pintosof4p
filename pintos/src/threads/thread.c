@@ -213,10 +213,10 @@ thread_create (const char *name, int priority,
   sf->ebp = 0;
 
   intr_set_level (old_level);
-
   /* Add to run queue. */
   thread_unblock (t);
-
+  //printf("[CREATE %s,]",t->name);
+  //ready_list_dump();
   return tid;
 }
 
@@ -248,34 +248,32 @@ void
 thread_unblock (struct thread *t) 
 {
   enum intr_level old_level;
-  
   ASSERT (is_thread (t));
   
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
   /* L: put it to the ready_list order by priority */
   list_insert_ordered(&ready_list,&t->elem,priority_higher,NULL);
+  
   t->status = THREAD_READY;
-  //printf("[%s Unblocked]\n",t->name);
+  
   /* L: Some thread t_low may unblock a higher priority thread t_high,
    * in such case t_low must yield cpu to t_high immediately */
-  if(!list_empty(&ready_list))
+  struct list_elem *ready_e = list_max (&ready_list, priority_lower, NULL);
+  int max_priority = list_entry(ready_e,struct thread, elem)->priority;
+  
+  /* L: We just handle normal thread priority change, idle is not
+   * one of them. We do not handle it here, just let it pass. */
+  if((thread_current ()->priority < max_priority) &&(thread_current() != idle_thread))
   {
-    struct list_elem *ready_e = list_max (&ready_list, priority_higher, NULL);
-    int max_priority = list_entry(ready_e,struct thread, elem)->priority;
-    
-    /* L: We just handle normal thread priority change, idle is not
-     * one of them. We do not handle it here, just let it pass. */
-    if((thread_current ()->priority < max_priority) &&(thread_current() != idle_thread))
-    {
-      /* L: unblock maybe called in intr-context or non-intr-context,
-       * they are different in handling. */
-      if (intr_context ())
-        intr_yield_on_return ();
-      else
-        thread_yield ();
-    }
+    /* L: unblock maybe called in intr-context or non-intr-context,
+     * they are different in handling. */
+    if (intr_context ())
+      intr_yield_on_return ();
+    else
+      thread_yield ();
   }
+  
   intr_set_level (old_level);
 }
 
@@ -630,7 +628,6 @@ schedule (void)
   list_remove (&next->elem);
   if (cur != next)
   {
-    //printf("[%s to %s]\n",cur->name,next->name);
     prev = switch_threads (cur, next);
   }
   thread_schedule_tail (prev);
@@ -713,7 +710,8 @@ bool sleep_less (const struct list_elem *a,
 }
 
 /* L: Used in the unblock to insert thread to ready_list ordered by
- * thread's priority. When schedule, we just take the top one out. */
+ * thread's priority. When schedule, we just take the top one out.
+ * NOW IT's DANGEROUS TO USE IT, it will cause list_max() returns min*/
 bool priority_higher (const struct list_elem *a,
                   const struct list_elem *b,void *aux)
 {
@@ -759,7 +757,6 @@ bool cond_lower (const struct list_elem *a,
   if (ap < bp) return true;
   return false;
 }
-
 
 /* L:Debug func dump the ready_list */
 /* Debug:dump the ready list */
@@ -828,11 +825,8 @@ void donate_do (void)
         continue;
       if (holder->priority < max_waiter->priority)
       {
-        //printf("\n[P%s(%d)->%s(%d)]\n",max_waiter->name,max_waiter->priority,holder->name,holder->priority);
-         holder->priority = max_waiter->priority;
-         //ASSERT(holder->priority!=max_waiter->priority);
-         //printf("[]");
-       }
+        holder->priority = max_waiter->priority;
+      }
     }
 }
 
