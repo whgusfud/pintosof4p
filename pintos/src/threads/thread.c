@@ -237,7 +237,6 @@ thread_tick (void)
 	if(thread_mlfqs)
 	{
 		t->recent_cpu=FADDI(t->recent_cpu,1);
-		//printf("[X]fuck %d\n",t->recent_cpu);
 	}
   }
 #endif
@@ -248,7 +247,6 @@ thread_tick (void)
 	if(thread_mlfqs)
 	{
 		t->recent_cpu=FADDI(t->recent_cpu,1);
-		//printf("[X]fuck %d\n",t->recent_cpu);
 	}
 }
   /*[X]summerize recent_cpu*/
@@ -258,7 +256,6 @@ thread_tick (void)
 	{
 	   	/*更新recent_cpu,load_avg*/
 	   	renew_load_avg();
-	   //	printf("[X] load_avg:%d\n",load_avg);
 	   	thread_all_renew();
      }
   }
@@ -268,7 +265,6 @@ thread_tick (void)
   /* Enforce preemption. */
   if (++thread_ticks >= TIME_SLICE)
   {
-	  //printf("[X]we need next\n");
     intr_yield_on_return ();
   }
 }
@@ -541,7 +537,6 @@ void
 thread_set_nice (int nice) 
 {
   /* [X]set nice value */
-  //printf("[X]%s setnice:%d\n",thread_current()->name,nice);
   thread_current()->nice=nice;
 }
 

@@ -259,7 +259,6 @@ lock_acquire (struct lock *lock)
   if(lock->holder!=NULL && lock->holder->priority < cur->priority)
   {
     lock->holder->priority = cur->priority;
-    //printf("[%s(%d) to %so(%d)]",cur->name,cur->priority,lock->holder->name,lock->holder->priority_old);
   }
   
 
