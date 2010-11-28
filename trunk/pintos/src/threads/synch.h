@@ -10,12 +10,6 @@ struct semaphore
     unsigned value;             /* Current value. */
     struct list waiters;        /* List of waiting threads. */
   };
-/* One semaphore in a list */
-struct semaphore_elem
-  {
-    struct list_elem elem;       /* List element */
-    struct semaphore semaphore;  /* This semaphore */
-  };  
 
 void sema_init (struct semaphore *, unsigned value);
 void sema_down (struct semaphore *);
@@ -26,24 +20,9 @@ void sema_self_test (void);
 /* Lock. */
 struct lock 
   {
-    /* L: add an lid to identifer the lock */
-    int lid;
-    //int priority;               /* Stores Max priority donated by this lock. */
     struct thread *holder;      /* Thread holding lock (for debugging). */
     struct semaphore semaphore; /* Binary semaphore controlling access. */
   };
-  
-/* Elem in a list */
-struct lock_elem
-  {
-    /* L:lock id */
-    int lid;
-    //int priority;
-    struct lock *lock;          /* This lock */
-    struct list_elem elem;      /* List element */
-  };
-/* L:lock list stores all the donation infomation */
-struct list lock_list;
 
 void lock_init (struct lock *);
 void lock_acquire (struct lock *);
