@@ -89,8 +89,11 @@ timer_elapsed (int64_t then)
 void
 timer_sleep (int64_t ticks) 
 {
- ASSERT (intr_get_level () == INTR_ON);
- thread_sleep (ticks);
+  int64_t start = timer_ticks ();
+
+  ASSERT (intr_get_level () == INTR_ON);
+  while (timer_elapsed (start) < ticks) 
+    thread_yield ();
 }
 
 /* Sleeps for approximately MS milliseconds.  Interrupts must be
@@ -168,11 +171,6 @@ static void
 timer_interrupt (struct intr_frame *args UNUSED)
 {
   ticks++;
-  /* L: To wakeup blocked(sleeping) threads, check &wakeup 
-   * Used to be called in thread_***() funcs, I move it here to make
-   * sure a thread is moved into ready_list EXACTLY it's wakeup tick
-   * comes. */
-  thread_wakeup();
   thread_tick ();
 }
 
