@@ -105,7 +105,7 @@ main (void)
   gdt_init ();
 #endif
 
-  /* Initialize interrupt handlers. */
+  /* Initialize interrupt handlers.*/
   intr_init ();
   timer_init ();
   kbd_init ();
