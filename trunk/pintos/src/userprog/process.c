@@ -25,23 +25,39 @@ static bool load (const char *cmdline, void (**eip) (void), void **esp);
    FILENAME.  The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
    thread id, or TID_ERROR if the thread cannot be created. */
+//[X]
 tid_t
-process_execute (const char *file_name) 
+process_execute (const char *parstr) 
 {
   char *fn_copy;
+  char* nowp=parstr;
+  char file_name[100];
   tid_t tid;
-
+  void* Addr=PHYS_BASE;
+  int i=0;
+  
+  //[X] 提取进程名
+  while((*nowp)!='\0'&&(*nowp)!=' ')
+  {
+	  file_name[i++]=*nowp;
+	  nowp++;
+  }
+  file_name[i]='\0';
+  
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
   fn_copy = palloc_get_page (0);
   if (fn_copy == NULL)
     return TID_ERROR;
-  strlcpy (fn_copy, file_name, PGSIZE);
+  strlcpy (fn_copy, parstr, PGSIZE);
+
+	
 
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy); 
+     
   return tid;
 }
 
@@ -50,20 +66,68 @@ process_execute (const char *file_name)
 static void
 start_process (void *file_name_)
 {
-  char *file_name = file_name_;
+  //char file_name[128];
+  char* file_name=file_name_;
+  //[X]提取文件名的指针
+  char* nowp=file_name_;
+  char* tmp;
+  char ctmp;
   struct intr_frame if_;
+  int i=0;
+  char *token, *save_ptr;
+  //[X]用户空间的顶部
+  uint32_t Stop=PHYS_BASE; 
   bool success;
-
+  //[X]提取文件名
+  while((*nowp)!='\0'&&(*nowp)!=' ')
+  {
+	  nowp++;
+  }
+  ctmp=*nowp;
+  (*nowp)='\0';
+  tmp=nowp;
+  
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
   success = load (file_name, &if_.eip, &if_.esp);
+  (*nowp)=ctmp;
 
+  //[X]解析参数放入应该放入的位置
+  char* argv[50];
+  int32_t argc=0;
+  for (token = strtok_r ((char*)file_name_, " ", &save_ptr); token != NULL;
+      token = strtok_r (NULL, " ", &save_ptr))
+      {  
+		 for(i=strlen(token);i>=0;i--)
+		{
+			Stop--;
+			*((char*)(Stop))=*(token+i);			
+		}		
+		argv[argc++]=Stop;
+  }
+  Stop=ROUND_DOWN(Stop,4);
+  Stop=Stop-sizeof(char*);
+  *((char**)(Stop))=NULL;
+  for(i=argc-1;i>=0;i--)
+  {
+	  Stop=Stop-sizeof(char*);
+	  *((char**)(Stop))=argv[i];
+  }	
+  Stop=Stop-sizeof(char**);
+  *((char***)(Stop))=Stop+4;
+  Stop=Stop-sizeof(int32_t);
+  *((int32_t*)(Stop))=argc;
+  Stop=Stop-sizeof(void(*)());
+  *((int32_t*)(Stop))=0;
+  
+  //hex_dump(Stop,Stop,PHYS_BASE-Stop,1);
+  
   /* If load failed, quit. */
   palloc_free_page (file_name);
-  if (!success) 
+    if (!success) 
     thread_exit ();
 
   /* Start the user process by simulating a return from an
@@ -72,7 +136,9 @@ start_process (void *file_name_)
      arguments on the stack in the form of a `struct intr_frame',
      we just point the stack pointer (%esp) to our stack frame
      and jump to it. */
-  asm volatile ("movl %0, %%esp; jmp intr_exit" : : "g" (&if_) : "memory");
+  //[X]标明栈顶位置
+  if_.esp=Stop;
+  asm volatile ("movl %0, %%esp; jmp intr_exit" : : "g" (&if_) : "memory"); 
   NOT_REACHED ();
 }
 
@@ -86,8 +152,17 @@ start_process (void *file_name_)
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
 int
-process_wait (tid_t child_tid UNUSED) 
+process_wait (tid_t child_tid) 
 {
+  //[X]循环检查用户进程有没有结束
+  while(1)
+  {
+	if(!thread_find(child_tid))
+	{
+		process_exit();
+		break;
+	}	
+  }
   return -1;
 }
 
@@ -247,7 +322,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
   for (i = 0; i < ehdr.e_phnum; i++) 
     {
       struct Elf32_Phdr phdr;
-
+   //   printf("file_offset %x\n",file_ofs);
       if (file_ofs < 0 || file_ofs > file_length (file))
         goto done;
       file_seek (file, file_ofs);
@@ -304,13 +379,11 @@ load (const char *file_name, void (**eip) (void), void **esp)
   /* Set up stack. */
   if (!setup_stack (esp))
     goto done;
-
   /* Start address. */
   *eip = (void (*) (void)) ehdr.e_entry;
-
   success = true;
 
- done:
+ done:	
   /* We arrive here whether the load is successful or not. */
   file_close (file);
   return success;
@@ -358,8 +431,13 @@ validate_segment (const struct Elf32_Phdr *phdr, struct file *file)
      it then user code that passed a null pointer to system calls
      could quite likely panic the kernel by way of null pointer
      assertions in memcpy(), etc. */
-  if (phdr->p_vaddr < PGSIZE)
+    
+  //[X]我加了offset因为用户程序需要这么做，这是一个待解决的问题
+  if (phdr->p_vaddr+phdr->p_offset < PGSIZE)
+  {
+//	 printf("phdr->p_vaddr < PGSIZE  %d\n",phdr->p_vaddr);
     return false;
+}
 
   /* It's okay. */
   return true;
@@ -387,6 +465,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
   ASSERT (pg_ofs (upage) == 0);
   ASSERT (ofs % PGSIZE == 0);
 
+  //printf("LALAL\n");
   file_seek (file, ofs);
   while (read_bytes > 0 || zero_bytes > 0) 
     {

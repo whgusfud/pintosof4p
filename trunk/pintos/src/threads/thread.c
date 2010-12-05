@@ -283,6 +283,26 @@ thread_tid (void)
   return thread_current ()->tid;
 }
 
+/*[X]check whether the thread is died*/
+struct thread* thread_find(tid_t num )
+{
+  struct list_elem *e;
+  enum intr_level old_level;
+ //ASSERT (intr_get_level () == INTR_OFF);
+// old_level = intr_disable ();
+  for (e = list_begin (&all_list); e != list_end (&all_list);
+       e = list_next (e))
+    {
+      struct thread *t = list_entry (e, struct thread, allelem);
+      if(t->tid==num)
+      {
+	     return true;
+	 }
+    }
+    //intr_set_level (old_level);
+    return false;
+}
+
 /* Deschedules the current thread and destroys it.  Never
    returns to the caller. */
 void
