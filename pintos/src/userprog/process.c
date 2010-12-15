@@ -28,7 +28,7 @@ static bool load (const char *cmdline, void (**eip) (void), void **esp);
 //[X]
 tid_t
 process_execute (const char *parstr) 
-{
+{ 
   char *fn_copy;
   char* nowp=parstr;
   char file_name[100];
@@ -36,28 +36,25 @@ process_execute (const char *parstr)
   void* Addr=PHYS_BASE;
   int i=0;
   
-  //[X] 提取进程名
+  //[X] get the process's name
   while((*nowp)!='\0'&&(*nowp)!=' ')
   {
-	  file_name[i++]=*nowp;
-	  nowp++;
+    file_name[i++]=*nowp;
+    nowp++;
   }
   file_name[i]='\0';
-  
+  struct thread *t;
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
   fn_copy = palloc_get_page (0);
   if (fn_copy == NULL)
     return TID_ERROR;
   strlcpy (fn_copy, parstr, PGSIZE);
-
-	
-
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
+  //[X]check whether TID is valid
   if (tid == TID_ERROR)
-    palloc_free_page (fn_copy); 
-     
+    palloc_free_page (fn_copy);
   return tid;
 }
 
@@ -65,8 +62,7 @@ process_execute (const char *parstr)
    running. */
 static void
 start_process (void *file_name_)
-{
-  //char file_name[128];
+{ 
   char* file_name=file_name_;
   //[X]提取文件名的指针
   char* nowp=file_name_;
@@ -75,13 +71,13 @@ start_process (void *file_name_)
   struct intr_frame if_;
   int i=0;
   char *token, *save_ptr;
-  //[X]用户空间的顶部
+  //[X]top of the user memory space
   uint32_t Stop=PHYS_BASE; 
   bool success;
-  //[X]提取文件名
+  //[X]get the file name
   while((*nowp)!='\0'&&(*nowp)!=' ')
   {
-	  nowp++;
+    nowp++;
   }
   ctmp=*nowp;
   (*nowp)='\0';
@@ -92,51 +88,55 @@ start_process (void *file_name_)
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  success = load (file_name, &if_.eip, &if_.esp);
-  (*nowp)=ctmp;
-
-  //[X]解析参数放入应该放入的位置
-  char* argv[50];
-  int32_t argc=0;
-  for (token = strtok_r ((char*)file_name_, " ", &save_ptr); token != NULL;
-      token = strtok_r (NULL, " ", &save_ptr))
-      {  
-		 for(i=strlen(token);i>=0;i--)
-		{
-			Stop--;
-			*((char*)(Stop))=*(token+i);			
-		}		
-		argv[argc++]=Stop;
-  }
-  Stop=ROUND_DOWN(Stop,4);
-  Stop=Stop-sizeof(char*);
-  *((char**)(Stop))=NULL;
-  for(i=argc-1;i>=0;i--)
-  {
-	  Stop=Stop-sizeof(char*);
-	  *((char**)(Stop))=argv[i];
-  }	
-  Stop=Stop-sizeof(char**);
-  *((char***)(Stop))=Stop+4;
-  Stop=Stop-sizeof(int32_t);
-  *((int32_t*)(Stop))=argc;
-  Stop=Stop-sizeof(void(*)());
-  *((int32_t*)(Stop))=0;
-  
-  //hex_dump(Stop,Stop,PHYS_BASE-Stop,1);
-  
+  success = load (file_name, &if_.eip, &if_.esp); 
   /* If load failed, quit. */
-  palloc_free_page (file_name);
     if (!success) 
-    thread_exit ();
-
+    {	 		
+		thread_current()->tid=-1;
+		//[X]use sema to wake up his father thread
+		sema_up(&(thread_current()->tsem));
+		thread_current()->ret_status=-1;
+		printf ("%s: exit(%d)\n", thread_name(),-1);
+		thread_exit();		 
+	 } 	 
+	 sema_up(&(thread_current()->tsem));	
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
      threads/intr-stubs.S).  Because intr_exit takes all of its
      arguments on the stack in the form of a `struct intr_frame',
      we just point the stack pointer (%esp) to our stack frame
      and jump to it. */
-  //[X]标明栈顶位置
+  //[X]parse the argument string and place it in the user's stack
+  (*nowp)=ctmp;
+   char* argv[50];
+  int32_t argc=0;
+  for (token = strtok_r ((char*)file_name_, " ", &save_ptr); token != NULL;
+      token = strtok_r (NULL, " ", &save_ptr))
+      {  
+     for(i=strlen(token);i>=0;i--)
+    {
+      Stop--;
+      *((char*)(Stop))=*(token+i);      
+    }   
+    argv[argc++]=Stop;
+  }
+  Stop=ROUND_DOWN(Stop,4);
+  Stop=Stop-sizeof(char*);
+  *((char**)(Stop))=NULL;
+  for(i=argc-1;i>=0;i--)
+  {
+    Stop=Stop-sizeof(char*);
+    *((char**)(Stop))=argv[i];
+  } 
+  Stop=Stop-sizeof(char**);
+  *((char***)(Stop))=Stop+4;
+  Stop=Stop-sizeof(int32_t);
+  *((int32_t*)(Stop))=argc;
+  Stop=Stop-sizeof(void(*)());
+  *((int32_t*)(Stop))=0;
+  //free space
+  palloc_free_page (file_name);
+  //[X]note the top of the user stack
   if_.esp=Stop;
   asm volatile ("movl %0, %%esp; jmp intr_exit" : : "g" (&if_) : "memory"); 
   NOT_REACHED ();
@@ -154,25 +154,53 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid) 
 {
-  //[X]循环检查用户进程有没有结束
-  while(1)
+  struct thread* t;
+  struct list_elem *e;
+  int returnv;
+  if(thread_find(child_tid))
   {
-	if(!thread_find(child_tid))
-	{
-		process_exit();
-		break;
-	}	
+  e=get_thread_by_tid (child_tid);
+  t=list_entry (e, struct thread, child_elem);
+  //[X]We don't need to wait a process twice
+  if(t->alwaited)
+	 return -1;
+  //[X]use sema to avoid busy wait
+  sema_down(&t->wsem);
+  returnv=t->ret_status;
+  //[X]note that the process has been waited
+  t->alwaited=true;
+  return returnv;
   }
-  return -1;
+  else
+  {
+    return -1;
+  }
 }
 
 /* Free the current process's resources. */
 void
 process_exit (void)
-{
+{ 
   struct thread *cur = thread_current ();
+  
+  //[X]wake up its father process
+  sema_up(&(cur->wsem));
+  
+  struct list_elem* e;
+  //[X] for rox test
+  if(cur->elffile!=NULL)
+    file_allow_write(cur->elffile);
+  //[X]close all file open by the current thread
+  e=list_begin(&cur->fd_list);
+  while(list_empty (&(cur->fd_list))==false)
+  {
+	struct file_desc* fd=list_entry(e,struct file_desc,elem);
+	file_close(fd->file);
+	e=list_remove(e);
+	free(fd);	  
+  }
   uint32_t *pd;
-
+  
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
   pd = cur->pagedir;
@@ -289,7 +317,6 @@ load (const char *file_name, void (**eip) (void), void **esp)
   off_t file_ofs;
   bool success = false;
   int i;
-
   /* Allocate and activate page directory. */
   t->pagedir = pagedir_create ();
   if (t->pagedir == NULL) 
@@ -297,13 +324,15 @@ load (const char *file_name, void (**eip) (void), void **esp)
   process_activate ();
 
   /* Open executable file. */
+  
   file = filesys_open (file_name);
+  //[X]rox_test
+  thread_current()->elffile=file;
   if (file == NULL) 
     {
-      printf ("load: %s: open failed\n", file_name);
+      printf ("load: %s: open failed\n", file_name);     
       goto done; 
     }
-
   /* Read and verify executable header. */
   if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
       || memcmp (ehdr.e_ident, "\177ELF\1\1\1", 7)
@@ -322,7 +351,6 @@ load (const char *file_name, void (**eip) (void), void **esp)
   for (i = 0; i < ehdr.e_phnum; i++) 
     {
       struct Elf32_Phdr phdr;
-   //   printf("file_offset %x\n",file_ofs);
       if (file_ofs < 0 || file_ofs > file_length (file))
         goto done;
       file_seek (file, file_ofs);
@@ -351,6 +379,11 @@ load (const char *file_name, void (**eip) (void), void **esp)
               uint32_t mem_page = phdr.p_vaddr & ~PGMASK;
               uint32_t page_offset = phdr.p_vaddr & PGMASK;
               uint32_t read_bytes, zero_bytes;
+              
+              //[X]we don't use the first 0x1000 memory space
+              if (mem_page==0)
+					mem_page+=0x1000;
+              
               if (phdr.p_filesz > 0)
                 {
                   /* Normal segment.
@@ -382,10 +415,12 @@ load (const char *file_name, void (**eip) (void), void **esp)
   /* Start address. */
   *eip = (void (*) (void)) ehdr.e_entry;
   success = true;
-
- done:	
+  //[X]for rox test,deny write in a elf file
+  file_deny_write(file);
+  return success;
+ done:  
   /* We arrive here whether the load is successful or not. */
-  file_close (file);
+  file_close (file); 
   return success;
 }
 
@@ -432,12 +467,11 @@ validate_segment (const struct Elf32_Phdr *phdr, struct file *file)
      could quite likely panic the kernel by way of null pointer
      assertions in memcpy(), etc. */
     
-  //[X]我加了offset因为用户程序需要这么做，这是一个待解决的问题
-  if (phdr->p_vaddr+phdr->p_offset < PGSIZE)
+  //[X]elf header declares vaddr as 0 but not use it
+  if (phdr->p_offset < PGSIZE)
   {
-//	 printf("phdr->p_vaddr < PGSIZE  %d\n",phdr->p_vaddr);
     return false;
-}
+  }
 
   /* It's okay. */
   return true;
@@ -465,7 +499,6 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
   ASSERT (pg_ofs (upage) == 0);
   ASSERT (ofs % PGSIZE == 0);
 
-  //printf("LALAL\n");
   file_seek (file, ofs);
   while (read_bytes > 0 || zero_bytes > 0) 
     {
@@ -542,3 +575,5 @@ install_page (void *upage, void *kpage, bool writable)
   return (pagedir_get_page (t->pagedir, upage) == NULL
           && pagedir_set_page (t->pagedir, upage, kpage, writable));
 }
+
+

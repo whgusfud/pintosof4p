@@ -70,7 +70,7 @@ static void *alloc_frame (struct thread *, size_t size);
 static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
-
+static tid_t next_tid = 1;
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
    general and it is possible in this case only because loader.S
@@ -92,7 +92,6 @@ thread_init (void)
   lock_init (&tid_lock);
   list_init (&ready_list);
   list_init (&all_list);
-
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
   init_thread (initial_thread, "main", PRI_DEFAULT);
@@ -165,8 +164,9 @@ thread_print_stats (void)
 tid_t
 thread_create (const char *name, int priority,
                thread_func *function, void *aux) 
-{
+{ 
   struct thread *t;
+  struct list_elem* e;
   struct kernel_thread_frame *kf;
   struct switch_entry_frame *ef;
   struct switch_threads_frame *sf;
@@ -175,15 +175,22 @@ thread_create (const char *name, int priority,
 
   ASSERT (function != NULL);
 
-  /* Allocate thread. */
+//[X]we need to forbid to many threads running at the same time to avoid
+//using out all the resourses
+  if(list_size(&all_list)>50)
+	return TID_ERROR;
+	
+    /* Allocate thread. */
   t = palloc_get_page (PAL_ZERO);
   if (t == NULL)
+  {
     return TID_ERROR;
+  }
 
-  /* Initialize thread. */
+  
   init_thread (t, name, priority);
   tid = t->tid = allocate_tid ();
-
+  
   /* Prepare thread for first run by initializing its stack.
      Do this atomically so intermediate values for the 'stack' 
      member cannot be observed. */
@@ -208,8 +215,16 @@ thread_create (const char *name, int priority,
 
   /* Add to run queue. */
   thread_unblock (t);
-
-  return tid;
+#ifdef USERPROG
+  //[X]we don't need to wait for the main and the idle thread to load
+  if((strcmp(t->name,"main")!=0)&&(strcmp(t->name,"idle")!=0))
+  {
+	//[X]wait untill the correct tid is get
+	sema_down(&(t->tsem));
+	return t->tid;
+  }
+#endif
+  return t->tid;
 }
 
 /* Puts the current thread to sleep.  It will not be scheduled
@@ -220,12 +235,13 @@ thread_create (const char *name, int priority,
    primitives in synch.h. */
 void
 thread_block (void) 
-{
+{ 
   ASSERT (!intr_context ());
   ASSERT (intr_get_level () == INTR_OFF);
 
   thread_current ()->status = THREAD_BLOCKED;
   schedule ();
+  
 }
 
 /* Transitions a blocked thread T to the ready-to-run state.
@@ -238,7 +254,7 @@ thread_block (void)
    update other data. */
 void
 thread_unblock (struct thread *t) 
-{
+{ 
   enum intr_level old_level;
 
   ASSERT (is_thread (t));
@@ -246,6 +262,8 @@ thread_unblock (struct thread *t)
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
   list_push_back (&ready_list, &t->elem);
+
+  struct thread *f;
   t->status = THREAD_READY;
   intr_set_level (old_level);
 }
@@ -283,25 +301,27 @@ thread_tid (void)
   return thread_current ()->tid;
 }
 
-/*[X]check whether the thread is died*/
-struct thread* thread_find(tid_t num )
+/*[X]check out whether the thread is in it's father's child_list*/
+bool thread_find(tid_t num )
 {
   struct list_elem *e;
+  struct thread* t;
   enum intr_level old_level;
- //ASSERT (intr_get_level () == INTR_OFF);
-// old_level = intr_disable ();
-  for (e = list_begin (&all_list); e != list_end (&all_list);
+  old_level=intr_disable();
+  for (e = list_begin (&(thread_current()->child_list)); e != list_end (&(thread_current()->child_list));
        e = list_next (e))
     {
-      struct thread *t = list_entry (e, struct thread, allelem);
+      struct thread *t = list_entry (e, struct thread, child_elem);
       if(t->tid==num)
       {
-	     return true;
-	 }
+		intr_set_level (old_level);
+       return true;
+	  }
     }
-    //intr_set_level (old_level);
+    intr_set_level (old_level);
     return false;
 }
+
 
 /* Deschedules the current thread and destroys it.  Never
    returns to the caller. */
@@ -309,7 +329,6 @@ void
 thread_exit (void) 
 {
   ASSERT (!intr_context ());
-
 #ifdef USERPROG
   process_exit ();
 #endif
@@ -471,6 +490,8 @@ running_thread (void)
 static bool
 is_thread (struct thread *t)
 {
+	//if(t!=THREAD_MAGIC)
+	//printf("CAONIMA\n");
   return t != NULL && t->magic == THREAD_MAGIC;
 }
 
@@ -489,7 +510,18 @@ init_thread (struct thread *t, const char *name, int priority)
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
   t->magic = THREAD_MAGIC;
+  list_init (&t->fd_list);
   list_push_back (&all_list, &t->allelem);
+  /*X*/
+#ifdef USERPROG
+    //[X]init the new added data structure
+    list_init(&t->child_list);
+	sema_init (&(t->tsem), 0); 
+	sema_init (&(t->wsem),0);
+	if(is_thread(running_thread ()))
+	list_push_back(&(running_thread ()->child_list),&(t->child_elem));
+	t->alwaited=false;
+#endif
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and
@@ -539,6 +571,8 @@ void
 thread_schedule_tail (struct thread *prev)
 {
   struct thread *cur = running_thread ();
+  //[X]to traverse all the kids
+  struct list_elem* e;
   
   ASSERT (intr_get_level () == INTR_OFF);
 
@@ -547,12 +581,7 @@ thread_schedule_tail (struct thread *prev)
 
   /* Start new time slice. */
   thread_ticks = 0;
-
-#ifdef USERPROG
-  /* Activate the new address space. */
-  process_activate ();
-#endif
-
+  
   /* If the thread we switched from is dying, destroy its struct
      thread.  This must happen late so that thread_exit() doesn't
      pull out the rug under itself.  (We don't free
@@ -561,8 +590,20 @@ thread_schedule_tail (struct thread *prev)
   if (prev != NULL && prev->status == THREAD_DYING && prev != initial_thread) 
     {
       ASSERT (prev != cur);
-      palloc_free_page (prev);
+      //[X] in order to save children's information,we free the space only
+      //when the father thread is THREAD_DYING
+	  while(list_empty (&(prev->child_list))==false)
+	  {		  
+		  e=list_pop_back(&prev->child_list);
+		  palloc_free_page(list_entry (e, struct thread, child_elem));		  
+	  }
     }
+#ifdef USERPROG
+  /* Activate the new address space. */
+  process_activate ();
+#endif
+
+
 }
 
 /* Schedules a new process.  At entry, interrupts must be off and
@@ -582,7 +623,6 @@ schedule (void)
   ASSERT (intr_get_level () == INTR_OFF);
   ASSERT (cur->status != THREAD_RUNNING);
   ASSERT (is_thread (next));
-
   if (cur != next)
     prev = switch_threads (cur, next);
   thread_schedule_tail (prev);
@@ -602,6 +642,70 @@ allocate_tid (void)
   return tid;
 }
 
+bool is_tid_valid(tid_t tid)
+{
+  if(tid<=next_tid)
+    return true;
+  else return false;
+}
+/*by W*/
+//[X]get child by tid from father's child_list
+struct list_elem*
+get_thread_by_tid (tid_t tid)
+{
+  struct list_elem *f;
+  struct thread *ret;
+  enum intr_level old_level;
+  old_level=intr_disable();
+  ret = NULL;
+  for (f = list_begin (&(thread_current()->child_list)); f != list_end (&(thread_current()->child_list)); 
+   f = list_next (f))
+    {
+      ret = list_entry (f, struct thread, child_elem);
+      ASSERT (is_thread (ret));
+      if (ret->tid == tid)
+      {
+		intr_set_level (old_level);
+        return f;
+	  }
+    }
+  intr_set_level (old_level); 
+  return NULL;
+}
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);
+
+/* L:Debug func dump the ready_list */
+/* Debug:dump the ready list */
+void ready_list_dump(void)
+{
+  struct list_elem *e;
+  struct thread *f;
+  if(list_size(&ready_list)!=0){
+  printf("[%lld,dump ready list]\n",(uint64_t)timer_ticks());
+  for (e = list_begin (&ready_list); e != list_end (&ready_list);
+           e = list_next (e))
+        {
+          f = list_entry (e, struct thread, elem);
+          printf("[* %s is ready,pri:%d]\n",f->name,f->priority);
+        }
+      }
+}
+
+//[X]tool for debugging the child_list schema
+void child_list_dump(void)
+{
+ printf("%s CHILD\n",thread_current()->name);
+  struct list_elem *e;
+  struct thread *f;
+  if(list_size(&(thread_current()->child_list))!=0){
+  printf("[%lld,dump child list]\n",(uint64_t)timer_ticks());
+  for (e = list_begin (&(thread_current()->child_list)); e != list_end (&(thread_current()->child_list));
+           e = list_next (e))
+        {
+          f = list_entry (e, struct thread, child_elem);
+          printf("[* %s is child,pri:%d]\n",f->name,f->tid);
+        }
+      }
+}
