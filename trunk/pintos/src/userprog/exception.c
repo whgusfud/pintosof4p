@@ -7,7 +7,6 @@
 
 /* Number of page faults processed. */
 static long long page_fault_cnt;
-
 static void kill (struct intr_frame *);
 static void page_fault (struct intr_frame *);
 
@@ -90,7 +89,6 @@ kill (struct intr_frame *f)
               thread_name (), f->vec_no, intr_name (f->vec_no));
       intr_dump_frame (f);
       thread_exit (); 
-
     case SEL_KCSEG:
       /* Kernel's code segment, which indicates a kernel bug.
          Kernel code shouldn't throw exceptions.  (Page faults
@@ -147,6 +145,15 @@ page_fault (struct intr_frame *f)
   not_present = (f->error_code & PF_P) == 0;
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
+  
+  /*[X]the page fault caused by user leads to exit()*/
+  if(user)
+  {
+	    printf ("%s: exit(%d)\n", thread_name(),-1);
+	    thread_current()->ret_status=-1;
+		thread_exit();
+		return;
+  }
 
   /* To implement virtual memory, delete the rest of the function
      body, and replace it with code that brings in the page to

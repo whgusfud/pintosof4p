@@ -59,6 +59,8 @@ lookup_page (uint32_t *pd, const void *vaddr, bool create)
   uint32_t *pt, *pde;
 
   ASSERT (pd != NULL);
+  
+		
 
   /* Shouldn't create new kernel virtual mappings. */
   ASSERT (!create || is_user_vaddr (vaddr));
@@ -83,6 +85,14 @@ lookup_page (uint32_t *pd, const void *vaddr, bool create)
   /* Return the page table entry. */
   pt = pde_get_pt (*pde);
   return &pt[pt_no (vaddr)];
+}
+
+//[X] find a way to use lookup_page
+bool pagedir_mapped(uint32_t *pd, const void *vaddr)
+{
+	if(lookup_page(pd,vaddr,0)==0)
+		return false;
+	return true;
 }
 
 /* Adds a mapping in page directory PD from user virtual page

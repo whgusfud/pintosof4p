@@ -77,7 +77,7 @@ int
 main (void)
 {
   char **argv;
-
+  
   /* Clear BSS. */  
   bss_init ();
 
@@ -89,7 +89,7 @@ main (void)
      then enable console locking. */
   thread_init ();
   console_init ();  
-
+  
   /* Greet user. */
   printf ("Pintos booting with %'"PRIu32" kB RAM...\n",
           init_ram_pages * PGSIZE / 1024);
@@ -126,9 +126,9 @@ main (void)
   locate_block_devices ();
   filesys_init (format_filesys);
 #endif
-
-  printf ("Boot complete.\n");
   
+  printf ("Boot complete.\n");
+ 
   /* Run actions specified on kernel command line. */
   run_actions (argv);
 
@@ -282,10 +282,10 @@ static void
 run_task (char **argv)
 {
   const char *task = argv[1];
-  
+
   printf ("Executing '%s':\n", task);
 #ifdef USERPROG
-  process_wait (process_execute (task));
+  process_wait (process_execute(task));
 #else
   run_test (task);
 #endif
@@ -304,7 +304,7 @@ run_actions (char **argv)
       int argc;                         /* # of args, including action name. */
       void (*function) (char **argv);   /* Function to execute action. */
     };
-
+  
   /* Table of supported actions. */
   static const struct action actions[] = 
     {
@@ -340,7 +340,6 @@ run_actions (char **argv)
       a->function (argv);
       argv += a->argc;
     }
-  
 }
 
 /* Prints a kernel command line help message and powers off the

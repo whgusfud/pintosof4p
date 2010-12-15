@@ -8,5 +8,5 @@
 void
 test_main (void) 
 {
-  msg ("exec(\"no-such-file\"): %d", exec ("no-such-file"));
+ msg ("exec(\"no-such-file\"): %d", exec ("no-such-file"));
 }

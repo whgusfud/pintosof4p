@@ -4,6 +4,16 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+#include "threads/synch.h"
+//L:
+struct file_desc
+{
+int fd;	 /* L:file descriptor */
+struct file *file;
+struct list_elem elem;
+};
+
+
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -89,13 +99,23 @@ struct thread
     uint8_t *stack;                     /* Saved stack pointer. */
     int priority;                       /* Priority. */
     struct list_elem allelem;           /* List element for all threads list. */
+    struct list_elem child_elem;        /*[X] List element for child threads
 
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
-
+    struct list fd_list;
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
+    int ret_status;  
+    //[X]sema to avoid busy wait
+    struct semaphore tsem,wsem;
+    //[X]store child threads' information
+    struct list child_list;
+    //[X]store the file* to avoid write in the elf file
+    struct file* elffile;
+    //[X] whether the thread has already been waited
+    bool alwaited;
 #endif
 
     /* Owned by thread.c. */
@@ -137,7 +157,10 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
-
-struct thread* thread_find(tid_t num);
+bool is_tid_valid(tid_t tid);
+struct list_elem* get_thread_by_tid (tid_t);
+void ready_list_dump(void);
 
 #endif /* threads/thread.h */
+
+

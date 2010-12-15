@@ -49,7 +49,6 @@ static void
 consume_some_resources (void)
 {
   int fd, fdmax = 126;
-
   /* Open as many files as we can, up to fdmax.
      Depending on how file descriptors are allocated inside
      the kernel, open() may fail if the kernel is low on memory.
@@ -106,7 +105,6 @@ int
 main (int argc, char *argv[])
 {
   int n;
-
   n = argc > 1 ? atoi (argv[1]) : 0;
   bool is_at_root = (n == 0);
   if (is_at_root)
@@ -146,7 +144,9 @@ main (int argc, char *argv[])
 
       /* If maximum depth is reached, return result. */
       if (child_pid == -1)
+      {
         return n;
+	  }
 
       /* Else wait for child to report how deeply it was able to recurse. */
       int reached_depth = wait (child_pid);
