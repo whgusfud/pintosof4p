@@ -14,6 +14,9 @@
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
+#ifdef VM
+#include "vm/swap.h"
+#endif
 
 /* Random value for struct thread's `magic' member.
    Used to detect stack overflow.  See the big comment at the top
@@ -92,6 +95,7 @@ thread_init (void)
   lock_init (&tid_lock);
   list_init (&ready_list);
   list_init (&all_list);
+  swap_init();
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
   init_thread (initial_thread, "main", PRI_DEFAULT);
@@ -132,6 +136,16 @@ thread_tick (void)
 #endif
   else
     kernel_ticks++;
+  
+	//[X]LRU记录
+#ifdef VM
+	if (t->pagedir != NULL)
+	{
+	    ASSERT (intr_get_level () == INTR_OFF);
+		changerec();
+	}
+#endif
+
 
   /* Enforce preemption. */
   if (++thread_ticks >= TIME_SLICE)
@@ -178,8 +192,8 @@ thread_create (const char *name, int priority,
 //[X]we need to forbid to many threads running at the same time to avoid
 //using out all the resourses
   if(list_size(&all_list)>50)
-	return TID_ERROR;
-	
+  return TID_ERROR;
+  
     /* Allocate thread. */
   t = palloc_get_page (PAL_ZERO);
   if (t == NULL)
@@ -219,9 +233,9 @@ thread_create (const char *name, int priority,
   //[X]we don't need to wait for the main and the idle thread to load
   if((strcmp(t->name,"main")!=0)&&(strcmp(t->name,"idle")!=0))
   {
-	//[X]wait untill the correct tid is get
-	sema_down(&(t->tsem));
-	return t->tid;
+  //[X]wait untill the correct tid is get
+  sema_down(&(t->tsem));
+  return t->tid;
   }
 #endif
   return t->tid;
@@ -314,9 +328,9 @@ bool thread_find(tid_t num )
       struct thread *t = list_entry (e, struct thread, child_elem);
       if(t->tid==num)
       {
-		intr_set_level (old_level);
+    intr_set_level (old_level);
        return true;
-	  }
+    }
     }
     intr_set_level (old_level);
     return false;
@@ -490,8 +504,8 @@ running_thread (void)
 static bool
 is_thread (struct thread *t)
 {
-	//if(t!=THREAD_MAGIC)
-	//printf("CAONIMA\n");
+  //if(t!=THREAD_MAGIC)
+  //printf("CAONIMA\n");
   return t != NULL && t->magic == THREAD_MAGIC;
 }
 
@@ -514,13 +528,21 @@ init_thread (struct thread *t, const char *name, int priority)
   list_push_back (&all_list, &t->allelem);
   /*X*/
 #ifdef USERPROG
-    //[X]init the new added data structure
-    list_init(&t->child_list);
-	sema_init (&(t->tsem), 0); 
-	sema_init (&(t->wsem),0);
-	if(is_thread(running_thread ()))
-	list_push_back(&(running_thread ()->child_list),&(t->child_elem));
-	t->alwaited=false;
+  //[X]init the new added data structure
+  list_init(&t->child_list);
+  sema_init (&(t->tsem), 0); 
+  sema_init (&(t->wsem),0);
+  if(is_thread(running_thread ()))
+  list_push_back(&(running_thread ()->child_list),&(t->child_elem));
+  t->alwaited=false;
+#endif
+
+#ifdef VM
+  list_init(&t->spt);
+  //[X]初始化swapt
+  list_init(&t->swapt);
+  lock_init(&t->swap_list_lock);
+  lock_init(&t->spt_list_lock);
 #endif
 }
 
@@ -592,11 +614,11 @@ thread_schedule_tail (struct thread *prev)
       ASSERT (prev != cur);
       //[X] in order to save children's information,we free the space only
       //when the father thread is THREAD_DYING
-	  while(list_empty (&(prev->child_list))==false)
-	  {		  
-		  e=list_pop_back(&prev->child_list);
-		  palloc_free_page(list_entry (e, struct thread, child_elem));		  
-	  }
+    while(list_empty (&(prev->child_list))==false)
+    {     
+      e=list_pop_back(&prev->child_list);
+      palloc_free_page(list_entry (e, struct thread, child_elem));      
+    }
     }
 #ifdef USERPROG
   /* Activate the new address space. */
@@ -665,9 +687,9 @@ get_thread_by_tid (tid_t tid)
       ASSERT (is_thread (ret));
       if (ret->tid == tid)
       {
-		intr_set_level (old_level);
+    intr_set_level (old_level);
         return f;
-	  }
+    }
     }
   intr_set_level (old_level); 
   return NULL;

@@ -18,6 +18,10 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 
+#ifdef VM
+#include "vm/page.h"
+#endif
+
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
 
@@ -88,18 +92,21 @@ start_process (void *file_name_)
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  success = load (file_name, &if_.eip, &if_.esp); 
+  /* L: TODO modify the load to add a spt entry to the thread,
+   * we load at the first PF happens. */
+  //printf("[load %s,esp=%p]",file_name,if_.esp);
+  success = load (file_name, &if_.eip, &if_.esp);
   /* If load failed, quit. */
     if (!success) 
-    {	 		
-		thread_current()->tid=-1;
-		//[X]use sema to wake up his father thread
-		sema_up(&(thread_current()->tsem));
-		thread_current()->ret_status=-1;
-		printf ("%s: exit(%d)\n", thread_name(),-1);
-		thread_exit();		 
-	 } 	 
-	 sema_up(&(thread_current()->tsem));	
+    {     
+    thread_current()->tid=-1;
+    //[X]use sema to wake up his father thread
+    sema_up(&(thread_current()->tsem));
+    thread_current()->ret_status=-1;
+    printf ("%s: exit(%d)\n", thread_name(),-1);
+    thread_exit();     
+   }   
+   sema_up(&(thread_current()->tsem));  
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
      threads/intr-stubs.S).  Because intr_exit takes all of its
@@ -163,7 +170,7 @@ process_wait (tid_t child_tid)
   t=list_entry (e, struct thread, child_elem);
   //[X]We don't need to wait a process twice
   if(t->alwaited)
-	 return -1;
+   return -1;
   //[X]use sema to avoid busy wait
   sema_down(&t->wsem);
   returnv=t->ret_status;
@@ -182,7 +189,8 @@ void
 process_exit (void)
 { 
   struct thread *cur = thread_current ();
-  
+  struct spt_elem *spte;
+  struct list_elem *se;
   //[X]wake up its father process
   sema_up(&(cur->wsem));
   
@@ -190,14 +198,40 @@ process_exit (void)
   //[X] for rox test
   if(cur->elffile!=NULL)
     file_allow_write(cur->elffile);
+    
+  #ifdef VM
+   for(se=list_begin(&thread_current()->spt);
+	   se!=list_end(&thread_current()->spt);se=list_next(se))
+	{
+		spte=(struct spt_elem *)list_entry (se, struct spt_elem, elem);
+		if(spte->mapid)
+		{
+			if(pagedir_is_dirty(thread_current()->pagedir,spte->upage))
+			{
+				file_write_at(spte->fileptr,spte->upage,PGSIZE,spte->ofs);
+			}	
+		}
+	} 
+	//[X]退出时该删除的文件要删除，该关闭的文件要删除,后面资源统一关闭这里只做删除
+   for(se=list_begin(&thread_current()->spt);
+	   se!=list_end(&thread_current()->spt);se=list_next(se))
+	{
+		spte=(struct spt_elem *)list_entry (se, struct spt_elem, elem);
+		if(spte->mapid&&spte->needremove)
+		{
+			filesys_remove(spte->fileptr);
+		}
+	}
+#endif
+
   //[X]close all file open by the current thread
   e=list_begin(&cur->fd_list);
   while(list_empty (&(cur->fd_list))==false)
   {
-	struct file_desc* fd=list_entry(e,struct file_desc,elem);
-	file_close(fd->file);
-	e=list_remove(e);
-	free(fd);	  
+  struct file_desc* fd=list_entry(e,struct file_desc,elem);
+  file_close(fd->file);
+  e=list_remove(e);
+  free(fd);   
   }
   uint32_t *pd;
   
@@ -382,7 +416,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
               
               //[X]we don't use the first 0x1000 memory space
               if (mem_page==0)
-					mem_page+=0x1000;
+          mem_page+=0x1000;
               
               if (phdr.p_filesz > 0)
                 {
@@ -499,7 +533,14 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
   ASSERT (pg_ofs (upage) == 0);
   ASSERT (ofs % PGSIZE == 0);
 
+#ifdef VM
+  /* L: we have to keep the absolute read offset, we did not read the 
+   * file continueously */
+  uint32_t readed_page = 0;
+#else
   file_seek (file, ofs);
+#endif
+
   while (read_bytes > 0 || zero_bytes > 0) 
     {
       /* Calculate how to fill this page.
@@ -507,16 +548,47 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
          and zero the final PAGE_ZERO_BYTES bytes. */
       size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
       size_t page_zero_bytes = PGSIZE - page_read_bytes;
-
+      
+#ifdef VM
+      /* L: we do not load file to page here, we will load it 
+       * when PF happends. Add an elem to spt, so we can find where is
+       * the page content later in PF handler. */
+      char ch;
+      //[X]加锁
+      lock_acquire(&thread_current()->spt_list_lock);
+      struct spt_elem *spte=(struct spt_elem *)malloc(sizeof(struct spt_elem));
+      /* L: which upage this spt entry is descripting */
+      spte->upage=upage;
+      /* L: fill the entry to record the load-file infomation */
+      spte->fileptr=file;
+      /* L: we need a abs ofs of the file */
+      spte->ofs=(uint32_t)ofs + (readed_page * (uint32_t)PGSIZE);;
+      readed_page++;
+      
+      spte->read_bytes=page_read_bytes;
+      spte->zero_bytes=page_zero_bytes;
+      spte->writable=writable;
+      //printf("[spte added:u%p,f%p,w(%d),RB(%d),ZB(%d)]\n",upage,file,writable,page_read_bytes,page_zero_bytes);
+      list_push_back (&thread_current()->spt, &spte->elem);
+      //[X]解锁
+      lock_release(&thread_current()->spt_list_lock);
+#else
+      /* L: Original load_seg used in no VM situation */
       /* Get a page of memory. */
-      uint8_t *kpage = palloc_get_page (PAL_USER);
+      //uint8_t *kpage = palloc_get_page (PAL_USER);
+      /* L: using frame allocator in frame.c */
+      uint8_t *kpage =frame_get(false,upage);
+      
       if (kpage == NULL)
         return false;
 
       /* Load this page. */
       if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes)
         {
+          /*
           palloc_free_page (kpage);
+          * using my frame free er */
+          frame_free(kpage);
           return false; 
         }
       memset (kpage + page_read_bytes, 0, page_zero_bytes);
@@ -524,10 +596,11 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       /* Add the page to the process's address space. */
       if (!install_page (upage, kpage, writable)) 
         {
-          palloc_free_page (kpage);
+          //palloc_free_page (kpage);
+          frame_free(kpage);
           return false; 
         }
-
+#endif
       /* Advance. */
       read_bytes -= page_read_bytes;
       zero_bytes -= page_zero_bytes;
@@ -544,14 +617,18 @@ setup_stack (void **esp)
   uint8_t *kpage;
   bool success = false;
 
-  kpage = palloc_get_page (PAL_USER | PAL_ZERO);
+  //kpage = palloc_get_page (PAL_USER | PAL_ZERO);
+  kpage = frame_get(true,((uint8_t *) PHYS_BASE) - PGSIZE);
   if (kpage != NULL) 
     {
       success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
-      if (success)
+      if (success){
         *esp = PHYS_BASE;
+        thread_current()->stacklow=((uint8_t *) PHYS_BASE) - PGSIZE;
+      }
       else
-        palloc_free_page (kpage);
+      //palloc_free_page (kpage);
+        frame_free (kpage);
     }
   return success;
 }
@@ -576,4 +653,7 @@ install_page (void *upage, void *kpage, bool writable)
           && pagedir_set_page (t->pagedir, upage, kpage, writable));
 }
 
-
+/* L: a load helpler called in exception, why the former func is static? */
+bool process_install_page(void *upage, void *kpage, bool writable){
+  return install_page (upage, kpage, writable);
+  }
