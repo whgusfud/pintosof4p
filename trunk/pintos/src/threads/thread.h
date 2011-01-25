@@ -8,7 +8,7 @@
 //L:
 struct file_desc
 {
-int fd;	 /* L:file descriptor */
+int fd;  /* L:file descriptor */
 struct file *file;
 struct list_elem elem;
 };
@@ -99,7 +99,7 @@ struct thread
     uint8_t *stack;                     /* Saved stack pointer. */
     int priority;                       /* Priority. */
     struct list_elem allelem;           /* List element for all threads list. */
-    struct list_elem child_elem;        /*[X] List element for child threads
+    struct list_elem child_elem;        /*[X] List element for child threads */
 
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
@@ -117,7 +117,18 @@ struct thread
     //[X] whether the thread has already been waited
     bool alwaited;
 #endif
-
+#ifdef VM
+    /* L: everyone get his own SPT mmok? */
+    struct list spt;
+    /* L: remember the end of the stack */
+    void* stacklow;
+    //[X]swap表
+    struct list swapt;
+    //[X]awapt锁
+    struct lock swap_list_lock;
+    //[X]spt锁
+    struct lock spt_list_lock;
+#endif
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
   };
